@@ -1,0 +1,42 @@
+const TelegramBot = require('node-telegram-bot-api');
+const { Octokit } = require('@octokit/core');
+const OpenAI = require('openai');
+
+const TOKEN = 'YOUR_TELEGRAM_TOKEN';
+const GITHUB_TOKEN = 'YOUR_GITHUB_TOKEN';
+const OPENAI_API_KEY = 'YOUR_OPENAI_API_KEY';
+
+const bot = new TelegramBot(TOKEN, { polling: true });
+const octokit = new Octokit({ auth: GITHUB_TOKEN });
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, 'Привет! Ревью PR: /review owner/repo pr_number');
+});
+
+bot.onText(/\/review (.+) (\d+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const repoName = match[1];
+  const prNumber = match[2];
+  try {
+    const prResponse = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+      owner: repoName.split('/')[0],
+      repo: repoName.split('/')[1],
+      pull_number: prNumber
+    });
+    const filesResponse = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/files', {
+      owner: repoName.split('/')[0],
+      repo: repoName.split('/')[1],
+      pull_number: prNumber
+    });
+    const codeSnippet = filesResponse.data.map(file => file.filename).join('\n'); // Упрощено, можно взять patch
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [{ role: 'user', content: `Review this code: ${codeSnippet}` }]
+    });
+    bot.sendMessage(chatId, completion.choices[0].message.content);
+  } catch (error) {
+    bot.sendMessage(chatId, 'Ошибка: ' + error.message);
+  }
+});
